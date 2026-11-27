@@ -32,7 +32,7 @@ abstract: >-
   data sparsity affects fault detection and line identification,
   covering individual relay failures, bus-level communication loss, downsampling,
   missing voltage or current channels, and intermittent block dropouts.
-repository-code: "https://github.com/julianoelhaf/eusipco2025-sparse-fault-detect"
+repository-code: "https://github.com/julianoelhaf/grid-protection-robustness"
 preferred-citation:
   type: conference-paper
   title: "Impact of Data Sparsity on Machine Learning for Fault Detection in Power System Protection"
