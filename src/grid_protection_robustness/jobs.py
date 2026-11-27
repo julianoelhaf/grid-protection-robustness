@@ -1,9 +1,10 @@
-import fcntl
+import errno
 import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from time import sleep
 
 
 def canonical(value):
@@ -32,10 +33,31 @@ def read_json(path):
 def claim(root, name, wait=False):
     locks = root / ".locks"
     locks.mkdir(parents=True, exist_ok=True)
-    with (locks / name).open("a") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
-        except BlockingIOError:
-            yield False
+    with (locks / name).open("a+b") as handle:
+        if os.name == "nt":
+            # Keep the legacy window commands usable on Windows.
+            import msvcrt
+
+            handle.seek(0)
+            while True:
+                try:
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError as exc:
+                    if exc.errno != errno.EACCES:
+                        raise
+                    if not wait:
+                        yield False
+                        return
+                    sleep(0.1)
+                else:
+                    yield True
+                    return
         else:
-            yield True
+            import fcntl
+
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+            except BlockingIOError:
+                yield False
+            else:
+                yield True
