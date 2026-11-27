@@ -1,0 +1,43 @@
+{
+  "software_release": "2.0.0",
+  "dataset_doi": "10.5281/zenodo.21109169",
+  "dataset_version": "1.0.0",
+  "labels_md5": "5f015330f77ed53b76bd5db26e83c48d",
+  "waveform_zip_md5": "7cf176f169299b825ba6a6be102edca8",
+  "paper": "https://arxiv.org/abs/2505.15560v2",
+  "software_baseline": "1f6eedb83ced6cf713a41d863e3f8080afe9ef1e",
+  "executed_matrix_runner_sha256": "311a33cd8169ff31c8a9a3b0013380b831e86c90eeae1504a0528cc9aee7c847",
+  "execution_completed_cet": "2026-11-27T07:01:58+01:00",
+  "episodes_by_fault_type": {
+    "LLL": 2273,
+    "LL": 2251,
+    "SLG": 2279,
+    "LLG": 2219
+  },
+  "cases": 260,
+  "folds": 1300,
+  "fold_score_rows": 6500,
+  "verification": "Independent recomputation from held-out predictions and fold assignments, all 6,500 scores matched at 1e-12 absolute tolerance.",
+  "reference_sha256": {
+    "all_fold_scores.csv": "f4cd602be7cabbbe4c81037b62a39d026b060c9ceae54120e4e2be48abd69bb4",
+    "environment.txt": "8b1b4b8024f1ce1179a0d2b3f7df5f8c55e3d4b594fbd548a8c24737288e575a",
+    "episode_folds.csv": "a2c57c33a3681f7fa1b3e98b5859b3b26dd5845d88bb6be6e17e274475ab0f4a",
+    "matrix.csv": "bad5e887886b4fac6a3b78ff138a7f572d1863b31f5a22fd50e7fc343bd84f11",
+    "matrix_summary.csv": "ddeaf24fd104a34db0710e3560464b4f02f55eaf3c9716fc0b3d47320fcfa791"
+  },
+  "executed_matrix_csv_sha256": "ea002e5d5493df7799cf325d6263d5a3fbc379637f02c65baff2bf78a51b4fc5",
+  "candidate_before_repackaging": "b300800ef2c0db8a5498a7cf20c2339ff7abea29",
+  "executed_source_archive_sha256": "65b33a37302f2f4378e52d6a60746117bfbf4bfa4fe2c4aeaf616574c36012f5",
+  "executed_window_sha256": {
+    "cache/10/windows.csv": "82400795a6eb56606c6998f21fa9504824b95d250bd56320bf83d5999b55be2e",
+    "cache/10/meta.json": "627f89ce383fae9006ccc727d4f6a4ef5f9b6232c2e80f0aae7a42239c59400f",
+    "cache/20/windows.csv": "fa9541578d3f81713f62e9d6e786369fe40f5b45239f6683e26b09ccea35a116",
+    "cache/20/meta.json": "d74f7b53f7ce0e500858b064d9a833f9bd09c9238f33dbffb1f8f786b5abeb2c",
+    "cache/30/windows.csv": "e7d588519970e03eac4dacd2c1438d8f7801d99169ee2426d2582ccb71fbce3f",
+    "cache/30/meta.json": "453f1bb288e1c9a576868a003f8b5082335706f222e40c041ef099a50813f02a",
+    "cache/40/windows.csv": "14a302a614a102af59686a3c378073fe5f1643c23330e43270a5484b4e1aa9b7",
+    "cache/40/meta.json": "1409ecdbee918b7cb8799e7fac951814345e2b7c363718fa1054f9f8a318d5a3",
+    "cache/50/windows.csv": "b6662199e75a028202ae8053092230cbaff7823d4895a0ef976ef71e29665b92",
+    "cache/50/meta.json": "bf58ad2f858c05582e5b319c36a15b98e94a2b7f3e235296a4f0cb238cd115a5"
+  }
+}

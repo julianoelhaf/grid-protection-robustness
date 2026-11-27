@@ -1,0 +1,73 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated paper (see preferred-citation)."
+title: "Grid Protection Robustness"
+type: software
+authors:
+  - family-names: "Oelhaf"
+    given-names: "Julian"
+    email: "julian.oelhaf@fau.de"
+  - family-names: "Kordowich"
+    given-names: "Georg"
+  - family-names: "Kim"
+    given-names: "Changhun"
+  - family-names: "Pérez-Toro"
+    given-names: "Paula Andrea"
+  - family-names: "Maier"
+    given-names: "Andreas"
+  - family-names: "Jäger"
+    given-names: "Johann"
+  - family-names: "Bayer"
+    given-names: "Siming"
+version: "2.0.0"
+license: MIT
+keywords:
+  - power system protection
+  - fault detection
+  - fault line identification
+  - data sparsity
+  - machine learning
+  - signal processing
+abstract: >-
+  Code for the EUSIPCO 2025 study and an all-fault PROTECT-90 evaluation of how
+  data sparsity affects fault detection and line identification,
+  covering individual relay failures, bus-level communication loss, downsampling,
+  missing voltage or current channels, and intermittent block dropouts.
+repository-code: "https://github.com/julianoelhaf/eusipco2025-sparse-fault-detect"
+preferred-citation:
+  type: conference-paper
+  title: "Grid Protection Robustness"
+  authors:
+    - family-names: "Oelhaf"
+      given-names: "Julian"
+      email: "julian.oelhaf@fau.de"
+    - family-names: "Kordowich"
+      given-names: "Georg"
+    - family-names: "Kim"
+      given-names: "Changhun"
+    - family-names: "Pérez-Toro"
+      given-names: "Paula Andrea"
+    - family-names: "Maier"
+      given-names: "Andreas"
+    - family-names: "Jäger"
+      given-names: "Johann"
+    - family-names: "Bayer"
+      given-names: "Siming"
+  collection-title: "2025 33rd European Signal Processing Conference (EUSIPCO)"
+  conference:
+    name: "33rd European Signal Processing Conference (EUSIPCO)"
+    city: "Palermo"
+    country: "IT"
+  year: 2025
+  start: 1997
+  end: 2001
+  doi: "10.23919/EUSIPCO63237.2025.11226584"
+  publisher:
+    name: "IEEE"
+  url: "https://ieeexplore.ieee.org/document/11226584"
+  identifiers:
+    - type: doi
+      value: "10.23919/EUSIPCO63237.2025.11226584"
+      description: "Published version (IEEE Xplore)"
+    - type: url
+      value: "https://arxiv.org/abs/2505.15560v2"
+      description: "Corrected arXiv version of the EUSIPCO study"

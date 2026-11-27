@@ -1,0 +1,18 @@
+name: Installed wheel
+on: [push, pull_request]
+jobs:
+  synthetic:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: |
+          python -m pip wheel --no-deps -w dist .
+          python -m pip install dist/*.whl pytest
+          python -m pip check
+      - run: |
+          cd "$RUNNER_TEMP"
+          grid-protection-robustness --help
+          python -m pytest --import-mode=importlib "$GITHUB_WORKSPACE/tests"

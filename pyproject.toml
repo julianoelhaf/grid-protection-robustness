@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools==82.0.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grid-protection-robustness"
+version = "2.0.0"
+description = "Reproducible robustness benchmarks for power system protection"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Julian Oelhaf"}]
+dependencies = [
+    "hydra-core", "joblib", "matplotlib", "mlflow", "natsort", "numpy",
+    "omegaconf", "pandas", "PyYAML", "scikit-learn", "seaborn", "tqdm",
+]
+
+[project.scripts]
+grid-protection-robustness = "grid_protection_robustness.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+grid_protection_robustness = ["protocol/*.csv", "protocol/*.json"]
+"sparse_fault_detect.config" = ["*.yaml", "*/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
