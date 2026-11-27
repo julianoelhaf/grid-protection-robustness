@@ -4,7 +4,7 @@ import os
 import re
 import zipfile
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from time import time
 from typing import Generator, List, Tuple
 
@@ -338,7 +338,8 @@ def extract_and_label_windows(
 
 
 def save_windows_and_labels(
-    window_data: np.ndarray, window_labels: np.ndarray, config: MainConfig, batch_id: int = 0
+    window_data: np.ndarray, window_labels: np.ndarray, config: MainConfig, batch_id: int = 0,
+    *, batch_dir: Path | None = None,
 ) -> None:
     """
     Save the preprocessed data to the specified directory.
@@ -348,19 +349,20 @@ def save_windows_and_labels(
         y (np.ndarray): The label array.
         config (MainConfig): Configuration object with necessary parameters.
     """
-    output_dir = os.path.join(
-        hydra.utils.get_original_cwd(),
-        config.dataset.data_directory,
-        config.window_extraction.windows_directory,
-    )
+    if batch_dir is None:
+        batch_dir = Path(
+            hydra.utils.get_original_cwd(),
+            config.dataset.data_directory,
+            config.window_extraction.windows_directory,
+        )
 
     # Add relevant paramters to the file name
     window_data_filename = f"X_batch{batch_id}_{config.window_extraction.window_length}_{config.window_extraction.step_length_seconds}.npy"
     window_labels_filename = f"y_batch{batch_id}_{config.window_extraction.window_length}_{config.window_extraction.step_length_seconds}.npy"
 
     try:
-        np.save(os.path.join(output_dir, window_data_filename), window_data)
-        np.save(os.path.join(output_dir, window_labels_filename), window_labels)
+        np.save(batch_dir / window_data_filename, window_data)
+        np.save(batch_dir / window_labels_filename, window_labels)
 
         logger.debug("Batch saved successfully.")
 
@@ -369,16 +371,17 @@ def save_windows_and_labels(
         raise
 
 
-def combine_windows_and_labels(config: MainConfig) -> None:
+def combine_windows_and_labels(config: MainConfig, *, batch_dir: Path | None = None) -> None:
     x_path, y_path = map(Path, generate_paths(config))
     with claim(x_path.parent, x_path.name, wait=True):
-        combine_batches(config, x_path, y_path)
+        combine_batches(config, x_path, y_path, batch_dir=batch_dir)
 
 
-def combine_batches(config, x_path, y_path):
+def combine_batches(config, x_path, y_path, *, batch_dir=None):
     output_dir = x_path.parent
+    batch_dir = output_dir if batch_dir is None else batch_dir
     pending = x_path.with_suffix(".pending")
-    window_files = os.listdir(output_dir)
+    window_files = os.listdir(batch_dir)
 
     # Extract values from config
     window_length = config.window_extraction.window_length
@@ -405,8 +408,8 @@ def combine_batches(config, x_path, y_path):
 
     X_list, y_list, source_files = [], [], []
     for file in selected_window_files:
-        X_filepath = output_dir / file
-        y_filepath = output_dir / ("y" + file[1:])
+        X_filepath = batch_dir / file
+        y_filepath = batch_dir / ("y" + file[1:])
         X_batch = np.load(X_filepath, allow_pickle=True)
         y_batch = np.load(y_filepath, allow_pickle=True)
         if len(X_batch) != len(y_batch):
@@ -589,24 +592,32 @@ def create_windows(config: MainConfig) -> None:
 
     processed_files = 0  # Track the number of files processed
 
-    with tqdm(total=total_files, desc="Processing files", unit="file") as pbar:
-        for batch_id, (batch_dataframes, batch_sample_ids) in enumerate(
-            get_preprocessed_data(config, batch_size)
-        ):
-            # Extract windows and labels
-            window_data, window_labels = extract_and_label_windows(
-                batch_dataframes, batch_sample_ids, labels, config
-            )
+    batch_dir = Path(mkdtemp(prefix=".window-batches-", dir=Path(X_path).parent))
+    try:
+        with tqdm(total=total_files, desc="Processing files", unit="file") as pbar:
+            for batch_id, (batch_dataframes, batch_sample_ids) in enumerate(
+                get_preprocessed_data(config, batch_size)
+            ):
+                # Extract windows and labels
+                window_data, window_labels = extract_and_label_windows(
+                    batch_dataframes, batch_sample_ids, labels, config
+                )
 
-            # Save each batch separately
-            save_windows_and_labels(window_data, window_labels, config=config, batch_id=batch_id)
+                # Save each batch separately
+                save_windows_and_labels(
+                    window_data, window_labels, config=config, batch_id=batch_id, batch_dir=batch_dir,
+                )
 
-            # Update progress bar by the number of files in this batch
-            processed_files += len(batch_dataframes)
-            pbar.update(len(batch_dataframes))
+                # Update progress bar by the number of files in this batch
+                processed_files += len(batch_dataframes)
+                pbar.update(len(batch_dataframes))
 
-    # Combine the saved data
-    combine_windows_and_labels(config)
+        combine_windows_and_labels(config, batch_dir=batch_dir)
+
+    except Exception:
+        logger.error("Window batches retained in %s", batch_dir)
+        raise
+    batch_dir.rmdir()
 
     # Log total time taken
     end_time = time()

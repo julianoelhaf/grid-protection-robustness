@@ -50,13 +50,16 @@ The default retry throttle is four. A new submission includes only incomplete
 cases, excludes pending cases in this launcher's Slurm arrays, and skips active
 case locks. Damaged results are reported separately. Once a case is inactive,
 quarantine it with `grid-protection-robustness eusipco repair-case CASE --run /scratch/eusipco`.
-The next submission can retry that case. Duplicate tasks cannot publish a second result. Summarization reads
+The next submission can retry that case. If a window's manifest is unavailable,
+restore it with `prepare`; submissions for other windows can continue.
+Duplicate tasks cannot publish a second result. Summarization reads
 the case receipts across arrays. The output directory is bound to the installed
 code, protocol, episode split, data identity and environment. Leave the run
 manifest, completed cases, and cache manifests in place. Window CSV files retain
-the row order needed for prediction verification. Use a separate run directory
-to regenerate caches and compare their row maps and array hashes with those of
-the previous run. Preserve the original case receipts.
+the row order needed for prediction verification. Before reclaiming space,
+wait for fits using the window to finish. You can then remove just that window's
+`x.npy`. Run `prepare` for the same window and run directory to restore the array
+after matching its checksum against the retained manifest.
 
 Before extracting the supplement, compare its SHA-256 against the release's
 `SHA256SUMS.txt`. Then invoke the installed verifier, which also checks the

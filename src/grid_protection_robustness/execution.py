@@ -1,7 +1,6 @@
 """Bindings and atomic case publication for the installed EUSIPCO runner."""
 
 import importlib.metadata
-import json
 import os
 import platform
 import sys
@@ -129,7 +128,8 @@ def prepare_case_inputs(root, data, window, smoke=False, sample_dir=None):
         for abandoned in base.glob(f".{window}-partial-*"):
             if abandoned.is_dir() and not abandoned.is_symlink():
                 rmtree(abandoned)
-        if not cache.exists():
+        array = cache / "x.npy"
+        if not array.exists():
             with TemporaryDirectory(prefix=f".{window}-partial-", dir=base) as temp:
                 staging = Path(temp) / "cache"
                 staging.mkdir()
@@ -137,11 +137,24 @@ def prepare_case_inputs(root, data, window, smoke=False, sample_dir=None):
                 recorded = describe_cache(staging, window, run_id, smoke)
                 if manifest.exists() and read_json(manifest) != recorded:
                     raise ValueError(f"Regenerated cache differs from its run manifest: {cache}")
-                publish_json(staging / "prepared.json", recorded)
-                publish_json(staging / "array-stat.json", {
-                    "stat": cache_stat(staging), "sha256": recorded["sha256"]["x.npy"],
-                })
-                staging.rename(cache)
+                if cache.exists():
+                    if cache.is_symlink() or read_json(cache / "prepared.json") != recorded:
+                        raise ValueError(f"Regenerated cache differs from its prepared manifest: {cache}")
+                    for name in ("meta.json", "windows.csv"):
+                        if digest(cache / name) != recorded["sha256"][name]:
+                            raise ValueError(f"Retained cache file changed: {cache / name}")
+                    # Publish the validated array independently of the retained manifests.
+                    (staging / "x.npy").replace(array)
+                    publish_json(staging / "array-stat.json", {
+                        "stat": cache_stat(cache), "sha256": recorded["sha256"]["x.npy"],
+                    })
+                    (staging / "array-stat.json").replace(cache / "array-stat.json")
+                else:
+                    publish_json(staging / "prepared.json", recorded)
+                    publish_json(staging / "array-stat.json", {
+                        "stat": cache_stat(staging), "sha256": recorded["sha256"]["x.npy"],
+                    })
+                    staging.rename(cache)
         recorded = check_prepared(cache, window, run_id, cache / "prepared.json")
         publish_json(manifest, recorded)
         return cache
@@ -151,12 +164,20 @@ class DamagedCase(ValueError):
     pass
 
 
+class UnavailableWindow(ValueError):
+    def __init__(self, window):
+        super().__init__(f"Cache manifest unavailable for {window} ms. Run prepare for that window.")
+
+
 def read_receipt(root, case_row):
     folder = root / "results" / f"{case_row.case:03d}"
     if not folder.exists():
         return None
     run_id = digest(root / "run.json")
-    manifest_id = digest(cache_manifest(root, case_row.window_ms))
+    try:
+        manifest_id = digest(cache_manifest(root, case_row.window_ms))
+    except OSError as exc:
+        raise UnavailableWindow(case_row.window_ms) from exc
     expected = {"fold-scores.csv", *(f"fold-{i}.npz" for i in range(1, 6))}
     try:
         receipt = read_json(folder / "STATUS.json")
@@ -168,7 +189,7 @@ def read_receipt(root, case_row):
         for name in expected:
             if digest(folder / name) != receipt["sha256"][name]:
                 raise ValueError(f"Checksum mismatch: {name}")
-    except (ValueError, KeyError, TypeError, FileNotFoundError) as exc:
+    except (ValueError, KeyError, TypeError, OSError) as exc:
         raise DamagedCase(f"Damaged case {case_row.case}: {exc}") from exc
     return receipt
 
@@ -225,16 +246,28 @@ def run_case(root, case, jobs, smoke=False):
 
 def remaining(root, active, array):
     pending = []
+    unavailable = {}
+    initialized = (root / "run.json").is_file()
     for row in matrix().itertuples(index=False):
-        case = row.case
+        case, window = row.case, row.window_ms
+        if window in unavailable:
+            continue
+        if initialized and not cache_manifest(root, window).is_file():
+            unavailable[window] = UnavailableWindow(window)
+            continue
         with claim(root, f"case-{case}") as available:
             if not available or case in active:
                 print(f"Case {case} is active.", file=sys.stderr)
                 continue
             try:
                 if read_receipt(root, row) is None:
-                    pending.append(str(case))
+                    pending.append((case, window))
+            except UnavailableWindow as exc:
+                unavailable[window] = exc
             except DamagedCase as exc:
                 print(f"{exc}. Use repair-case {case} before retrying.", file=sys.stderr)
-    if pending:
-        print(("," if array else "\n").join(pending))
+    for error in unavailable.values():
+        print(error, file=sys.stderr)
+    eligible = [str(case) for case, window in pending if window not in unavailable]
+    if eligible:
+        print(("," if array else "\n").join(eligible))
