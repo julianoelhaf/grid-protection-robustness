@@ -1,17 +1,22 @@
 """Bindings and atomic case publication for the installed EUSIPCO runner."""
 
 import importlib.metadata
+import json
 import os
 import platform
 import sys
+from shutil import rmtree
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 
+import numpy as np
 import pandas as pd
 
 from .audit import read_rows, verify_case
 from .jobs import claim, publish_json, read_json
-from .run_matrix import LABEL_FILE, PROTOCOL, REFERENCE, WAVEFORM_FILE, fit_case, prepare
+from .run_matrix import (
+    LABEL_FILE, PROTOCOL, RATE, REFERENCE, WAVEFORM_FILE, fit_case, prepare, relay_buses,
+)
 from .waveforms import digest
 
 
@@ -57,54 +62,132 @@ def bind_run(root, mode):
     return digest(path)
 
 
-def seal_cache(root, cache, window, run_id, smoke=False):
-    read_rows(cache / "windows.csv", smoke)
-    path = root / "cache-manifests" / f"{window}.json"
-    files = {name: digest(cache / name) for name in ("windows.csv", "meta.json")}
-    if path.is_file():
-        expected = read_json(path)
-        if {**expected, "run": run_id, "window": window,
-            "sha256": {**expected["sha256"], **files}} != expected:
-            raise ValueError(f"Cache manifest differs: {cache}")
-        if (cache_stat(cache) != expected["array_stat"]
-                and digest(cache / "x.npy") != expected["sha256"]["x.npy"]):
-            raise ValueError(f"Cache array changed: {cache}")
-    else:
-        files["x.npy"] = digest(cache / "x.npy")
-        publish_json(path, {
-            "run": run_id, "window": window, "sha256": files, "array_stat": cache_stat(cache)
-        })
-    return digest(path)
+def cache_manifest(root, window):
+    return root / "cache-manifests" / f"{window}.json"
 
 
 def cache_stat(cache):
     status = (cache / "x.npy").stat()
-    return {"bytes": status.st_size, "mtime_ns": status.st_mtime_ns}
+    return {
+        "bytes": status.st_size, "inode": status.st_ino,
+        "mtime_ns": status.st_mtime_ns, "ctime_ns": status.st_ctime_ns,
+    }
 
 
-def prepare_case_inputs(root, data, window):
+def describe_cache(cache, window, run_id, smoke):
+    rows = read_rows(cache / "windows.csv", smoke)
+    meta = read_json(cache / "meta.json")
+    episodes = pd.read_csv(REFERENCE / "episode_folds.csv").set_index("episode_id")
+    waveforms = episodes.loc[rows.sample_id.unique(), "waveform_sha256"]
+    expected_hashes = dict(zip(waveforms.index.astype(str), waveforms))
+    buses = {str(bus): relays for bus, relays in relay_buses(meta["names"]).items()}
+    if (meta["window_ms"] != window or meta["rows"] != len(rows)
+            or meta["dataset_doi"] != PROTOCOL["dataset_doi"]
+            or meta["relay_buses"] != buses or meta["episode_sha256"] != expected_hashes):
+        raise ValueError(f"Invalid cache metadata: {cache}")
+
+    array = np.load(cache / "x.npy", mmap_mode="r", allow_pickle=False)
+    capacity = len(waveforms) * ((160 - window) // 5 + 2)
+    if (array.shape != (capacity, round(window * RATE / 1000), 48)
+            or array.dtype != np.float32 or len(rows) > capacity):
+        raise ValueError(f"Invalid cache array shape or type: {cache}")
+
+    files = {name: digest(cache / name) for name in ("windows.csv", "meta.json", "x.npy")}
+    if not smoke and files["windows.csv"] != PROTOCOL["executed_window_sha256"][
+        f"cache/{window}/windows.csv"
+    ]:
+        raise ValueError(f"Cache row map differs from the pinned {window} ms map")
+    return {"run": run_id, "window": window, "sha256": files}
+
+
+def check_prepared(cache, window, run_id, manifest):
+    if not manifest.is_file():
+        raise ValueError(f"Cache is unsealed: {cache}. Run prepare first.")
+    recorded = read_json(manifest)
+    if recorded["run"] != run_id or recorded["window"] != window:
+        raise ValueError(f"Cache belongs to another run or window: {cache}")
+    hashes = recorded["sha256"]
+    for name in ("windows.csv", "meta.json"):
+        if digest(cache / name) != hashes[name]:
+            raise ValueError(f"Cache file changed: {cache / name}")
+    stamp = read_json(cache / "array-stat.json")
+    if stamp["sha256"] != hashes["x.npy"] or (
+        stamp["stat"] != cache_stat(cache) and digest(cache / "x.npy") != hashes["x.npy"]
+    ):
+        raise ValueError(f"Cache array changed: {cache}")
+    return recorded
+
+
+def prepare_case_inputs(root, data, window, smoke=False, sample_dir=None):
     with claim(root, f"prepare-{window}", wait=True):
-        run_id = bind_run(root, "matrix")
-        # Each episode is checked against its pinned raw-member SHA-256 before decoding.
-        prepare(window, data, root)
-        seal_cache(root, root / "cache" / str(window), window, run_id)
+        run_id = bind_run(root, "smoke" if smoke else "matrix")
+        base = root / ("smoke-cache" if smoke else "cache")
+        base.mkdir(exist_ok=True)
+        cache = base / str(window)
+        manifest = cache_manifest(root, window)
+        # Under the window lock, any abandoned stage for this window has no writer.
+        for abandoned in base.glob(f".{window}-partial-*"):
+            if abandoned.is_dir() and not abandoned.is_symlink():
+                rmtree(abandoned)
+        if not cache.exists():
+            with TemporaryDirectory(prefix=f".{window}-partial-", dir=base) as temp:
+                staging = Path(temp) / "cache"
+                staging.mkdir()
+                prepare(window, data, staging, smoke, sample_dir)
+                recorded = describe_cache(staging, window, run_id, smoke)
+                if manifest.exists() and read_json(manifest) != recorded:
+                    raise ValueError(f"Regenerated cache differs from its run manifest: {cache}")
+                publish_json(staging / "prepared.json", recorded)
+                publish_json(staging / "array-stat.json", {
+                    "stat": cache_stat(staging), "sha256": recorded["sha256"]["x.npy"],
+                })
+                staging.rename(cache)
+        recorded = check_prepared(cache, window, run_id, cache / "prepared.json")
+        publish_json(manifest, recorded)
+        return cache
 
 
-def read_receipt(root, case):
-    folder = root / "results" / f"{case:03d}"
+class DamagedCase(ValueError):
+    pass
+
+
+def read_receipt(root, case_row):
+    folder = root / "results" / f"{case_row.case:03d}"
     if not folder.exists():
         return None
-    receipt = read_json(folder / "STATUS.json")
-    if (receipt["case"] != case or receipt["status"] != "complete"
-            or receipt["run"] != digest(root / "run.json")
-            or receipt["cache"] != digest(root / "cache-manifests" / f"{receipt['window_ms']}.json")):
-        raise ValueError(f"Invalid receipt: {folder}")
-    for name, hashed in receipt["sha256"].items():
-        if digest(folder / name) != hashed:
-            raise ValueError(f"Invalid case output: {folder / name}")
-    if set(receipt["sha256"]) != {"fold-scores.csv", *(f"fold-{i}.npz" for i in range(1, 6))}:
-        raise ValueError(f"Incomplete case receipt: {folder}")
+    run_id = digest(root / "run.json")
+    manifest_id = digest(cache_manifest(root, case_row.window_ms))
+    expected = {"fold-scores.csv", *(f"fold-{i}.npz" for i in range(1, 6))}
+    try:
+        receipt = read_json(folder / "STATUS.json")
+        if (receipt["status"] != "complete" or receipt["run"] != run_id
+                or receipt["cache"] != manifest_id
+                or any(receipt[key] != value for key, value in case_row._asdict().items())
+                or set(receipt["sha256"]) != expected):
+            raise ValueError("Receipt fields or file inventory differ")
+        for name in expected:
+            if digest(folder / name) != receipt["sha256"][name]:
+                raise ValueError(f"Checksum mismatch: {name}")
+    except (ValueError, KeyError, TypeError, FileNotFoundError) as exc:
+        raise DamagedCase(f"Damaged case {case_row.case}: {exc}") from exc
     return receipt
+
+
+def repair_case(root, case):
+    row = next(row for row in matrix().itertuples(index=False) if row.case == case)
+    with claim(root, f"case-{case}") as acquired:
+        if not acquired:
+            raise ValueError(f"Case {case} is active.")
+        try:
+            read_receipt(root, row)
+        except DamagedCase:
+            quarantine = root / "quarantine"
+            quarantine.mkdir(exist_ok=True)
+            destination = Path(mkdtemp(prefix=f"{case:03d}-", dir=quarantine)) / "case"
+            (root / "results" / f"{case:03d}").rename(destination)
+            print(f"Quarantined case {case} at {destination}")
+            return
+        raise ValueError(f"Case {case} has no damaged result to quarantine.")
 
 
 def run_case(root, case, jobs, smoke=False):
@@ -114,11 +197,13 @@ def run_case(root, case, jobs, smoke=False):
             print(f"Case {case} is active.", file=sys.stderr)
             return
         run_id = bind_run(root, "smoke" if smoke else "matrix")
-        if read_receipt(root, case):
+        if read_receipt(root, case_row):
             print(f"Case {case} is complete.")
             return
         cache = root / ("smoke-cache" if smoke else "cache") / str(case_row.window_ms)
-        cache_id = seal_cache(root, cache, case_row.window_ms, run_id, smoke)
+        manifest = cache_manifest(root, case_row.window_ms)
+        check_prepared(cache, case_row.window_ms, run_id, manifest)
+        cache_id = digest(manifest)
         results = root / "results"
         results.mkdir(exist_ok=True)
         with TemporaryDirectory(prefix=f".{case:03d}-partial-", dir=results) as staging:
@@ -140,13 +225,16 @@ def run_case(root, case, jobs, smoke=False):
 
 def remaining(root, active, array):
     pending = []
-    for case in matrix().case:
-        if read_receipt(root, case):
-            continue
+    for row in matrix().itertuples(index=False):
+        case = row.case
         with claim(root, f"case-{case}") as available:
-            if available and case not in active:
-                pending.append(str(case))
-            else:
+            if not available or case in active:
                 print(f"Case {case} is active.", file=sys.stderr)
+                continue
+            try:
+                if read_receipt(root, row) is None:
+                    pending.append(str(case))
+            except DamagedCase as exc:
+                print(f"{exc}. Use repair-case {case} before retrying.", file=sys.stderr)
     if pending:
         print(("," if array else "\n").join(pending))

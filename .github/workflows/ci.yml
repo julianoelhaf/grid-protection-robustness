@@ -9,10 +9,15 @@ jobs:
         with:
           python-version: '3.12'
       - run: |
-          python -m pip wheel --no-deps -w dist .
-          python -m pip install dist/*.whl pytest
+          bash tools/build-antlr-wheel.sh wheelhouse
+          python -m pip download --find-links wheelhouse --require-hashes --only-binary=:all: -r requirements.lock -d wheelhouse
+          python -m pip install --no-index --find-links wheelhouse --require-hashes -r requirements.lock
+          python -m pip wheel --no-build-isolation --no-index --no-deps -w dist .
+          python -m pip install --no-index --no-deps dist/*.whl
           python -m pip check
       - run: |
           cd "$RUNNER_TEMP"
-          grid-protection-robustness --help
+          expected="$(seq -s, 0 259)"
+          actual="$(grid-protection-robustness eusipco remaining --run "$RUNNER_TEMP/empty-run" --array)"
+          test "$actual" = "$expected"
           python -m pytest --import-mode=importlib "$GITHUB_WORKSPACE/tests"

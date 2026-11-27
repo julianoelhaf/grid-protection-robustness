@@ -35,7 +35,7 @@ abstract: >-
 repository-code: "https://github.com/julianoelhaf/eusipco2025-sparse-fault-detect"
 preferred-citation:
   type: conference-paper
-  title: "Grid Protection Robustness"
+  title: "Impact of Data Sparsity on Machine Learning for Fault Detection in Power System Protection"
   authors:
     - family-names: "Oelhaf"
       given-names: "Julian"

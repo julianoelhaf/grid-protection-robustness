@@ -82,7 +82,10 @@ def verify_archive(root):
     from .summarize import summarize
 
     protocol = read_json(PROTOCOL_DIR / "manifest.json")
-    contents = read_json(root / "contents.json")
+    inventory = root / "contents.json"
+    require(digest(inventory) == protocol["evidence_inventory_sha256"],
+            "Evidence inventory differs from the pinned release")
+    contents = read_json(inventory)
     for name in ("matrix.csv", "episode_folds.csv"):
         require(digest(PROTOCOL_DIR / name) == protocol["reference_sha256"][name],
                 f"Packaged protocol differs: {name}")

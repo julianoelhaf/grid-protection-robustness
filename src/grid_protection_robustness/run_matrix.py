@@ -2,7 +2,6 @@ import hashlib
 import json
 import re
 import zipfile
-from tempfile import mkdtemp
 from pathlib import Path
 from types import SimpleNamespace as Config
 
@@ -69,23 +68,13 @@ def relay_buses(names):
     return mapping
 
 
-def prepare(window, data_dir, output_dir, smoke=False, sample_dir=None):
+def prepare(window, data_dir, staging, smoke=False, sample_dir=None):
     labels_path = data_dir / LABEL_FILE
     if digest(labels_path, "md5") != PROTOCOL["labels_md5"]:
         raise ValueError("Labels must be from PROTECT-90 v1.0.0 (Zenodo 21109169)")
     labels = pd.read_csv(labels_path).set_index("sample_id").sort_index()
     if labels.sc_type.value_counts().to_dict() != LABEL_COUNTS or not labels.index.is_unique:
         raise ValueError("Wrong PROTECT-90 episode population")
-    mode = "smoke-cache" if smoke else "cache"
-    base = output_dir / mode
-    base.mkdir(parents=True, exist_ok=True)
-    target = base / str(window)
-    if target.exists():
-        if all((target / name).is_file() for name in ("meta.json", "windows.csv", "x.npy")):
-            print(f"Reusing window cache {target}", flush=True)
-            return
-        raise ValueError(f"Incomplete window cache {target}. Use a fresh output directory.")
-    staging = Path(mkdtemp(prefix=f".{window}-partial-", dir=base))
     expected = pd.read_csv(REFERENCE / "episode_folds.csv").set_index("episode_id")
     split = episode_folds(labels)
     pd.testing.assert_series_equal(split, expected.fold.reindex(split.index), check_names=False)
@@ -158,7 +147,6 @@ def prepare(window, data_dir, output_dir, smoke=False, sample_dir=None):
             indent=2,
         )
     )
-    staging.rename(target)
     print(f"Prepared {offset} windows for {window} ms", flush=True)
 
 
@@ -252,9 +240,7 @@ def fit_case(case, cache, out, jobs, smoke=False):
         print(f"{task} {condition} {value}: fold {i}/5 complete", flush=True)
 
 
-def smoke_checks(data_dir, output_dir, sample_dir):
-    prepare(20, data_dir, output_dir, smoke=True, sample_dir=sample_dir)
-    cache = output_dir / "smoke-cache" / "20"
+def smoke_checks(cache):
     meta = json.loads((cache / "meta.json").read_text())
     x = np.load(cache / "x.npy", mmap_mode="r")[:2]
     for condition, value, expected_zero in [

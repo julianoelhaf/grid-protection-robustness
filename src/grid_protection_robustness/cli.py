@@ -14,13 +14,15 @@ def main():
     case = sub.add_parser("case")
     case.add_argument("case", type=int, choices=range(260), metavar="0-259")
     case.add_argument("--jobs", type=int, default=1)
+    repair = sub.add_parser("repair-case")
+    repair.add_argument("case", type=int, choices=range(260), metavar="0-259")
     remaining = sub.add_parser("remaining")
     remaining.add_argument("--array", action="store_true")
     remaining.add_argument("--active", default="", help="Comma-separated queued or running case IDs")
     summarize = sub.add_parser("summarize")
     verify = sub.add_parser("verify")
     verify.add_argument("--supplement", type=Path, required=True)
-    for command in (smoke, prepare, case, remaining, summarize):
+    for command in (smoke, prepare, case, repair, remaining, summarize):
         command.add_argument("--run", type=Path, required=True)
     for command in (smoke, prepare):
         command.add_argument("--data", type=Path, required=True)
@@ -38,22 +40,24 @@ def main():
 
     if args.command == "smoke":
         with claim(args.run, "smoke", wait=True):
-            execution.bind_run(args.run, "smoke")
-            smoke_checks(args.data, args.run, args.sample_dir)
+            cache = execution.prepare_case_inputs(args.run, args.data, 20, True, args.sample_dir)
+            smoke_checks(cache)
             for case_id in (44, 62, 68, 86):
                 execution.run_case(args.run, case_id, args.jobs, smoke=True)
     elif args.command == "prepare":
         execution.prepare_case_inputs(args.run, args.data, args.window_ms)
     elif args.command == "case":
         execution.run_case(args.run, args.case, args.jobs)
+    elif args.command == "repair-case":
+        execution.repair_case(args.run, args.case)
     elif args.command == "remaining":
         active = {int(value) for value in args.active.split(",") if value}
         execution.remaining(args.run, active, args.array)
     elif args.command == "summarize":
         with claim(args.run, "summarize", wait=True):
-            for case_id in execution.matrix().case:
-                if execution.read_receipt(args.run, case_id) is None:
-                    parser.error(f"Missing case {case_id}")
+            for row in execution.matrix().itertuples(index=False):
+                if execution.read_receipt(args.run, row) is None:
+                    parser.error(f"Missing case {row.case}")
             aggregate(args.run, args.run)
     else:
         verify_archive(args.supplement)

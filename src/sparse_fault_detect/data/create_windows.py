@@ -2,6 +2,9 @@ import logging
 import math
 import os
 import re
+import zipfile
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import time
 from typing import Generator, List, Tuple
 
@@ -13,6 +16,7 @@ from tqdm import tqdm
 
 from sparse_fault_detect.config.config import MainConfig
 from sparse_fault_detect import constants
+from grid_protection_robustness.jobs import claim
 
 logging.basicConfig(
     level=logging.INFO,
@@ -366,20 +370,14 @@ def save_windows_and_labels(
 
 
 def combine_windows_and_labels(config: MainConfig) -> None:
-    """
-    Combine the saved windows and labels into a single file.
-    """
+    x_path, y_path = map(Path, generate_paths(config))
+    with claim(x_path.parent, x_path.name, wait=True):
+        combine_batches(config, x_path, y_path)
 
-    output_dir = os.path.join(
-        hydra.utils.get_original_cwd(),
-        config.dataset.data_directory,
-        config.window_extraction.windows_directory,
-    )
 
-    if not os.path.exists(output_dir):
-        logger.error(f"Output directory does not exist: {output_dir}")
-        return
-
+def combine_batches(config, x_path, y_path):
+    output_dir = x_path.parent
+    pending = x_path.with_suffix(".pending")
     window_files = os.listdir(output_dir)
 
     # Extract values from config
@@ -391,6 +389,9 @@ def combine_windows_and_labels(config: MainConfig) -> None:
 
     # Filter files based on the exact expected pattern
     selected_window_files = [file for file in window_files if pattern.match(file)]
+    label_files = {file for file in window_files if file.startswith("y") and pattern.match("X" + file[1:])}
+    if label_files != {"y" + file[1:] for file in selected_window_files}:
+        raise ValueError("Window and label batch files must be paired before combining.")
 
     if not selected_window_files:
         logger.warning("No matching window files found. Skipping combination.")
@@ -402,42 +403,35 @@ def combine_windows_and_labels(config: MainConfig) -> None:
         f"Selected {len(selected_window_files)} window files. Preview: {preview_files} ..."
     )
 
-    X_list = []
-    y_list = []
-
+    X_list, y_list, source_files = [], [], []
     for file in selected_window_files:
-        X_filepath = os.path.join(output_dir, file)
-        y_filepath = os.path.join(output_dir, file.replace("X", "y"))
-
-        if not os.path.exists(y_filepath):
-            logger.error(f"Missing label file for {file}. Skipping this batch.")
-            continue  # Skip this batch if the corresponding y file is missing
-
+        X_filepath = output_dir / file
+        y_filepath = output_dir / ("y" + file[1:])
         X_batch = np.load(X_filepath, allow_pickle=True)
         y_batch = np.load(y_filepath, allow_pickle=True)
-
+        if len(X_batch) != len(y_batch):
+            raise ValueError(f"Window and label batch lengths differ: {file}")
         X_list.append(X_batch)
         y_list.append(y_batch)
-
-        # Remove processed batch files to free memory
-        os.remove(X_filepath)
-        os.remove(y_filepath)
-
-        logger.debug(f"Processed {file}: X shape {X_batch.shape}, y shape {y_batch.shape}")
-
-    if not X_list:
-        logger.error("No valid batches were processed. Exiting function.")
-        return
+        source_files.extend((X_filepath, y_filepath))
 
     X = np.concatenate(X_list, axis=0)
     y = np.concatenate(y_list, axis=0)
-
-    X_path, y_path = generate_paths(config)
-
-    np.savez_compressed(X_path, X=X)
-    np.savez_compressed(y_path, y=y)
-    logger.info(f"Shape of combined X: {X.shape}, Shape of combined y: {y.shape}")
-
+    del X_list, y_list
+    with TemporaryDirectory(prefix=".combine-", dir=output_dir) as folder:
+        staged = (Path(folder) / x_path.name, Path(folder) / y_path.name)
+        np.savez_compressed(staged[0], X=X)
+        np.savez_compressed(staged[1], y=y)
+        for path, key in zip(staged, ("X.npy", "y.npy")):
+            with zipfile.ZipFile(path) as archive:
+                if archive.namelist() != [key] or archive.testzip() is not None:
+                    raise ValueError(f"Invalid combined output: {path}")
+        pending.touch()
+        staged[0].replace(x_path)
+        staged[1].replace(y_path)
+        pending.unlink()
+    for path in source_files:
+        path.unlink()
     logger.info("Windows and labels combined and saved successfully.")
 
 
@@ -458,8 +452,14 @@ def load_windows_and_labels(config: MainConfig) -> Tuple[np.ndarray, pd.DataFram
 
     logger.debug(f"Loading X from {X_path} and y from {y_path}")
 
-    X = np.load(X_path, allow_pickle=True)["X"]
-    y = np.load(y_path, allow_pickle=True)["y"]
+    cache_path = Path(X_path)
+    with claim(cache_path.parent, cache_path.name, wait=True):
+        if cache_path.with_suffix(".pending").exists():
+            raise ValueError("Combined windows were interrupted. Run window creation again.")
+        with np.load(X_path, allow_pickle=True) as x_archive, np.load(
+            y_path, allow_pickle=True
+        ) as y_archive:
+            X, y = x_archive["X"], y_archive["y"]
 
     X = np.array(X, dtype=np.float32)
 
@@ -577,7 +577,8 @@ def create_windows(config: MainConfig) -> None:
 
     X_path, y_path = generate_paths(config)
 
-    if os.path.exists(X_path) and os.path.exists(y_path) and not config.overwrite:
+    if (os.path.exists(X_path) and os.path.exists(y_path)
+            and not Path(X_path).with_suffix(".pending").exists() and not config.overwrite):
         logger.info("Windows and labels already exist. Skipping creation.")
         return
 

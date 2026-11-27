@@ -7,7 +7,7 @@ wheelhouse and environment on every compute node.
 python3.12 -m venv .venv
 source .venv/bin/activate
 mkdir -p wheelhouse
-cp /path/to/release-artifacts/antlr4_python3_runtime-4.9.3-py3-none-any.whl wheelhouse/
+bash tools/build-antlr-wheel.sh wheelhouse
 python -m pip download --find-links wheelhouse --require-hashes --only-binary=:all: -r requirements.lock -d wheelhouse
 python -m pip install --no-index --find-links wheelhouse --require-hashes -r requirements.lock
 python -m pip wheel --no-build-isolation --no-deps --no-index -w dist .
@@ -15,8 +15,8 @@ python -m pip install --no-index --no-deps dist/grid_protection_robustness-2.0.0
 ```
 
 The locked ANTLR wheel is built from the upstream 4.9.3 source distribution.
-Use the staged wheel in the approved release wheelhouse when PyPI only supplies
-the source distribution. On Woody, stage the official PROTECT-90 v1.0.0 labels
+The bootstrap checks the source hash and builds with the locked tooling. The
+resulting wheel must match the hash in `requirements.lock`. On Woody, stage the official PROTECT-90 v1.0.0 labels
 and ZIP before submitting work. Keep the source ZIP and extracted caches outside
 Git. The preparation step validates every episode's SHA-256 before loading its
 pickle. Check the downloaded archives against the official file hashes.
@@ -37,7 +37,7 @@ grid-protection-robustness eusipco smoke --run /scratch/eusipco-smoke --data /pa
 ```
 
 Run the five preparation tasks on Slurm. Set the resource flags and working
-directory for your site. Wait for preparation and inspect the receipts before
+directory for your site. The preparation launcher requests 16 GiB. Wait for preparation and inspect the manifests before
 submitting the case array.
 
 ```bash
@@ -48,7 +48,9 @@ grid-protection-robustness eusipco summarize --run /scratch/eusipco
 
 The default retry throttle is four. A new submission includes only incomplete
 cases, excludes pending cases in this launcher's Slurm arrays, and skips active
-case locks. Duplicate tasks cannot publish a second result. Summarization reads
+case locks. Damaged results are reported separately. Once a case is inactive,
+quarantine it with `grid-protection-robustness eusipco repair-case CASE --run /scratch/eusipco`.
+The next submission can retry that case. Duplicate tasks cannot publish a second result. Summarization reads
 the case receipts across arrays. The output directory is bound to the installed
 code, protocol, episode split, data identity and environment. Leave the run
 manifest, completed cases, and cache manifests in place. Window CSV files retain
@@ -56,7 +58,9 @@ the row order needed for prediction verification. Use a separate run directory
 to regenerate caches and compare their row maps and array hashes with those of
 the previous run. Preserve the original case receipts.
 
-To audit the supplement, extract it and invoke the installed verifier.
+Before extracting the supplement, compare its SHA-256 against the release's
+`SHA256SUMS.txt`. Then invoke the installed verifier, which also checks the
+prediction inventory against its pinned hash.
 
 ```bash
 grid-protection-robustness eusipco verify --supplement /path/to/extracted-supplement
