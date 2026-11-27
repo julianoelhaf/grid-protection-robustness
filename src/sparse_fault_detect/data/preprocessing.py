@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import sys
+from pathlib import Path
 from typing import Dict, List
 
 import hydra
@@ -154,6 +155,11 @@ def process_file(input_file_path: str, output_file_path: str, config: MainConfig
         logger.debug(f"Validation failed for file: {input_file_path}")
 
 
+def preprocessed_directory(config: MainConfig) -> Path:
+    return Path(hydra.utils.get_original_cwd(), config.dataset.data_directory,
+                config.dataset.preprocessed_data_directory)
+
+
 def process_files_in_parallel(
     config: MainConfig,
 ) -> None:
@@ -162,9 +168,8 @@ def process_files_in_parallel(
     raw_data_directory = os.path.join(
         working_dir, config.dataset.data_directory, config.dataset.raw_data_directory
     )
-    preprocessed_data_directory = os.path.join(
-        working_dir, config.dataset.data_directory, config.dataset.preprocessed_data_directory
-    )
+    preprocessed_data_directory = preprocessed_directory(config)
+    preprocessed_data_directory.mkdir(parents=True, exist_ok=True)
     topology = config.dataset.topology
     files = os.listdir(raw_data_directory)
 

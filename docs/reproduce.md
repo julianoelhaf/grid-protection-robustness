@@ -52,6 +52,9 @@ case locks. Damaged results are reported separately. Once a case is inactive,
 quarantine it with `grid-protection-robustness eusipco repair-case CASE --run /scratch/eusipco`.
 The next submission can retry that case. If a window's manifest is unavailable,
 restore it with `prepare`; submissions for other windows can continue.
+Incomplete cases also require their cache inputs to be present before submission.
+Completed receipts remain valid after pruning arrays. Retrying a case reclaims its
+abandoned staging directories while holding its case lock.
 Duplicate tasks cannot publish a second result. Summarization reads
 the case receipts across arrays. The output directory is bound to the installed
 code, protocol, episode split, data identity and environment. Leave the run
@@ -74,3 +77,12 @@ held-out rows, ground-truth labels, fault families and all reported macro F1
 scores. It regenerates both published tables and compares their SHA-256
 digests. The supplement contains prediction arrays, row maps and original
 execution provenance. It excludes waveform files, derived arrays, and logs.
+
+## Legacy compatibility commands
+
+The `sparse_fault_detect` preprocessing and window commands resolve
+`dataset.preprocessed_data_directory` relative to `dataset.data_directory`
+and Hydra's original working directory. The default is `data/preprocessed`.
+An absolute directory override is also supported. Legacy training exports the
+selected fold's fitted scaler and classifier together as a pipeline, so saved
+models accept raw flattened windows after the configured sparsity transform.

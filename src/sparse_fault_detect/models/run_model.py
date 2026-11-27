@@ -16,6 +16,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, precision_score, recall_score
 from sklearn.model_selection import GroupKFold
+from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier, ExtraTreeClassifier
 
@@ -264,8 +265,6 @@ def main(config: MainConfig) -> None:
         configure_mlflow_tags(config)
         log_dataset_params(new_shape, full_dataset, config)
 
-        model = create_model_from_name(config)
-
         grouped_k_fold = GroupKFold(n_splits=config.training.n_splits)
         fold_metrics = []
         fold_models = []
@@ -275,9 +274,7 @@ def main(config: MainConfig) -> None:
             X_train, X_test = window_data[train_idx], window_data[test_idx]
             y_train, y_test = y[train_idx], y[test_idx]
 
-            scaler = StandardScaler()
-            X_train = scaler.fit_transform(X_train)
-            X_test = scaler.transform(X_test)
+            model = make_pipeline(StandardScaler(), create_model_from_name(config))
 
             # Train model
             model_time = time.time()

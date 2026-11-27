@@ -11,7 +11,7 @@ from grid_protection_robustness import execution
 from grid_protection_robustness.waveforms import digest
 
 
-def test_interrupted_worker_releases_its_case(tmp_path):
+def test_interrupted_worker_releases_its_case(tmp_path, monkeypatch):
     script = """
 import sys
 from pathlib import Path
@@ -19,7 +19,9 @@ from grid_protection_robustness.jobs import claim
 root = Path(sys.argv[1])
 with claim(root, "case-230") as acquired:
     assert acquired
-    (root / ".230-partial-test").mkdir()
+    stage = root / "results/.230-partial-test/case"
+    stage.mkdir(parents=True)
+    (stage / "fold-1.npz").write_bytes(b"abandoned prediction")
     print("locked", flush=True)
     sys.stdin.read()
 """
@@ -38,6 +40,17 @@ with claim(root, "case-230") as acquired:
     with claim(tmp_path, "case-230") as acquired:
         assert acquired
     assert execution.read_receipt(tmp_path, SimpleNamespace(case=230)) is None
+    other = tmp_path / "results/.229-partial-other"
+    other.mkdir()
+    completed = tmp_path / "results/230"
+    completed.mkdir()
+    (completed / "STATUS.json").write_bytes(b"completed receipt")
+    monkeypatch.setattr(execution, "bind_run", lambda *_: "run")
+    monkeypatch.setattr(execution, "read_receipt", lambda *_: {"status": "complete"})
+    execution.run_case(tmp_path, 230, 1)
+    assert not list((tmp_path / "results").glob(".230-partial-*"))
+    assert other.is_dir()
+    assert (completed / "STATUS.json").read_bytes() == b"completed receipt"
 
 
 def test_duplicate_does_not_fit(tmp_path, monkeypatch):
@@ -45,9 +58,12 @@ def test_duplicate_does_not_fit(tmp_path, monkeypatch):
         pytest.fail("Duplicate case ran a second fit")
 
     monkeypatch.setattr(execution, "fit_case", unexpected_fit)
+    staging = tmp_path / "results/.230-partial-active"
+    staging.mkdir(parents=True)
     with claim(tmp_path, "case-230") as acquired:
         assert acquired
         execution.run_case(tmp_path, 230, 1)
+        assert staging.is_dir()
     assert execution.read_receipt(tmp_path, SimpleNamespace(case=230)) is None
 
 
@@ -103,6 +119,14 @@ def test_prepare_rejects_swapped_cache(tmp_path, monkeypatch):
         execution.describe_cache(tmp_path, 50, "run", True)
 
 
+def cache_inputs(root, window, base="cache"):
+    cache = root / base / str(window)
+    cache.mkdir(parents=True, exist_ok=True)
+    for name in ("x.npy", "windows.csv", "meta.json", "array-stat.json"):
+        (cache / name).write_bytes(b"input")
+    return cache
+
+
 def test_damaged_receipt_does_not_hide_other_cases(tmp_path, monkeypatch, capsys):
     matrix = execution.matrix().head(3)
     monkeypatch.setattr(execution, "matrix", lambda: matrix)
@@ -111,6 +135,7 @@ def test_damaged_receipt_does_not_hide_other_cases(tmp_path, monkeypatch, capsys
     (case / "STATUS.json").write_text("{}")
     publish_json(tmp_path / "run.json", {})
     publish_json(execution.cache_manifest(tmp_path, int(matrix.iloc[0].window_ms)), {})
+    cache_inputs(tmp_path, int(matrix.iloc[0].window_ms))
     execution.remaining(tmp_path, {2}, array=True)
     streams = capsys.readouterr()
     assert streams.out.strip() == "1"
@@ -138,6 +163,7 @@ def test_unreadable_case_can_be_quarantined(tmp_path, monkeypatch, capsys):
     (result / "STATUS.json").mkdir(parents=True)
     publish_json(tmp_path / "run.json", {})
     publish_json(execution.cache_manifest(tmp_path, int(matrix.iloc[0].window_ms)), {})
+    cache_inputs(tmp_path, int(matrix.iloc[0].window_ms))
 
     execution.remaining(tmp_path, set(), array=True)
     output = capsys.readouterr()
@@ -153,6 +179,7 @@ def test_missing_window_manifest_only_blocks_that_window(tmp_path, monkeypatch, 
     monkeypatch.setattr(execution, "matrix", lambda: matrix)
     publish_json(tmp_path / "run.json", {})
     publish_json(execution.cache_manifest(tmp_path, 20), {})
+    cache_inputs(tmp_path, 20)
     for case in (2, 3):
         (tmp_path / "results" / f"{case:03d}").mkdir(parents=True)
     execution.remaining(tmp_path, set(), array=True)
@@ -162,6 +189,31 @@ def test_missing_window_manifest_only_blocks_that_window(tmp_path, monkeypatch, 
     with pytest.raises(execution.UnavailableWindow):
         execution.repair_case(tmp_path, 2)
     assert (tmp_path / "results" / "002").is_dir()
+
+
+@pytest.mark.parametrize("missing", ["x.npy", "windows.csv", "meta.json", "array-stat.json"])
+@pytest.mark.parametrize("mode,base", [("matrix", "cache"), ("smoke", "smoke-cache")])
+def test_remaining_requires_inputs_only_for_incomplete_cases(
+    tmp_path, monkeypatch, capsys, missing, mode, base,
+):
+    matrix = pd.DataFrame({"case": [0, 1, 2], "window_ms": [10, 10, 20]})
+    monkeypatch.setattr(execution, "matrix", lambda: matrix)
+    monkeypatch.setattr(execution, "read_receipt", lambda root, row: {"status": "complete"} if row.case == 0 else None)
+    publish_json(tmp_path / "run.json", {"mode": mode})
+    for window in (10, 20):
+        publish_json(execution.cache_manifest(tmp_path, window), {})
+        cache_inputs(tmp_path, window, base)
+    removed = tmp_path / base / "10" / missing
+    removed.unlink()
+    execution.remaining(tmp_path, set(), array=True)
+    output = capsys.readouterr()
+    assert output.out.strip() == "2"
+    assert output.err.count("Cache inputs unavailable for 10 ms") == 1
+    removed.write_bytes(b"restored")
+    execution.remaining(tmp_path, set(), array=True)
+    output = capsys.readouterr()
+    assert output.out.strip() == "1,2"
+    assert not output.err
 
 
 @pytest.mark.parametrize("matches", [True, False])

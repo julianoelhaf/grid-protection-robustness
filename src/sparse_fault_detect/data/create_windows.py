@@ -16,6 +16,7 @@ from tqdm import tqdm
 
 from sparse_fault_detect.config.config import MainConfig
 from sparse_fault_detect import constants
+from sparse_fault_detect.data.preprocessing import preprocessed_directory
 from grid_protection_robustness.jobs import claim
 
 logging.basicConfig(
@@ -106,7 +107,7 @@ def create_sliding_windows(
     window_size = math.ceil(window_length_seconds / time_diff)
     step_length = math.ceil(step_length_seconds / time_diff)
     if window_size <= step_length:
-        step_length = window_size // 2
+        step_length = max(1, window_size // 2)
 
     logger.debug(f"Window size: {window_size}, Step length: {step_length}, Time diff: {time_diff}")
 
@@ -537,7 +538,7 @@ def get_preprocessed_data(
     Yields:
         List[pd.DataFrame]: A batch of DataFrames containing the preprocessed data.
     """
-    preprocessed_data_directory = config.dataset.preprocessed_data_directory
+    preprocessed_data_directory = preprocessed_directory(config)
     list_of_files = os.listdir(preprocessed_data_directory)
     # Sort files using natural sorting
     list_of_files = natsort.natsorted(list_of_files)

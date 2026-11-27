@@ -218,6 +218,13 @@ def run_case(root, case, jobs, smoke=False):
             print(f"Case {case} is active.", file=sys.stderr)
             return
         run_id = bind_run(root, "smoke" if smoke else "matrix")
+        results = root / "results"
+        results.mkdir(exist_ok=True)
+        # The case lock excludes any live writer to these staging directories.
+        for abandoned in results.glob(f".{case:03d}-partial-*"):
+            if (abandoned.is_dir() and not abandoned.is_symlink()
+                    and abandoned.resolve().parent == results.resolve()):
+                rmtree(abandoned)
         if read_receipt(root, case_row):
             print(f"Case {case} is complete.")
             return
@@ -225,8 +232,6 @@ def run_case(root, case, jobs, smoke=False):
         manifest = cache_manifest(root, case_row.window_ms)
         check_prepared(cache, case_row.window_ms, run_id, manifest)
         cache_id = digest(manifest)
-        results = root / "results"
-        results.mkdir(exist_ok=True)
         with TemporaryDirectory(prefix=f".{case:03d}-partial-", dir=results) as staging:
             # Rename a child so TemporaryDirectory can still clean up normally.
             out = Path(staging) / "case"
@@ -248,6 +253,7 @@ def remaining(root, active, array):
     pending = []
     unavailable = {}
     initialized = (root / "run.json").is_file()
+    cache_base = "smoke-cache" if initialized and read_json(root / "run.json").get("mode") == "smoke" else "cache"
     for row in matrix().itertuples(index=False):
         case, window = row.case, row.window_ms
         if window in unavailable:
@@ -261,6 +267,14 @@ def remaining(root, active, array):
                 continue
             try:
                 if read_receipt(root, row) is None:
+                    cache = root / cache_base / str(window)
+                    if initialized and not all((cache / name).is_file() for name in (
+                        "x.npy", "windows.csv", "meta.json", "array-stat.json",
+                    )):
+                        unavailable[window] = ValueError(
+                            f"Cache inputs unavailable for {window} ms. Run prepare for that window."
+                        )
+                        continue
                     pending.append((case, window))
             except UnavailableWindow as exc:
                 unavailable[window] = exc

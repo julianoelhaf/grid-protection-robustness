@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from sparse_fault_detect.data.create_windows import extract_windows_from_dataframe
+from sparse_fault_detect.data.create_windows import create_sliding_windows
 
 
 @pytest.mark.parametrize("voltage_first", [False, True])
@@ -43,3 +44,23 @@ def test_window_extraction_requires_current_then_voltage_per_relay(voltage_first
         windows, _ = extract_windows_from_dataframe(frame, labels, 17, config)
         assert windows.shape == (1, 200, 6)
         np.testing.assert_array_equal(windows[0, 0], np.arange(1, 7))
+
+
+def test_one_sample_windows_advance(monkeypatch):
+    config = SimpleNamespace(window_extraction=SimpleNamespace(
+        window_length=.001, step_length_seconds=.001, time_diff=.001,
+        period_of_interest=.002,
+    ))
+    frame = pd.DataFrame({"timestamp": [.001, .002, .003]})
+    labels = pd.Series({"t_evnt_start": .002, "t_evnt_end": .003})
+    original = pd.DataFrame.reset_index
+    visits = []
+
+    def bounded_reset(data, *args, **kwargs):
+        visits.append(len(data))
+        assert len(visits) <= 4, "Window extraction failed to advance"
+        return original(data, *args, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "reset_index", bounded_reset)
+    windows = create_sliding_windows(frame, labels, config)
+    assert [window.timestamp.iloc[0] for window in windows] == [.001, .002, .003]
